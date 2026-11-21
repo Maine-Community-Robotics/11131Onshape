@@ -51,6 +51,14 @@ export enum TSlotProfile
     P40_8080
 }
 
+export enum ProfileFinish
+{
+    annotation { "Name" : "Aluminum" }
+    ALUMINUM,
+    annotation { "Name" : "Anodized aluminum" }
+    ANODIZED
+}
+
 export enum ProfileAlignment
 {
     annotation { "Name" : "Centered on line" }
@@ -77,14 +85,13 @@ const TUBE_WALLS = {
 
 // Weights are 80/20's catalog values (lb per inch). The modeled cross-section is simplified,
 // so the part's density is adjusted to make the mass match the catalog weight.
-const TSLOT_PROFILES = {
 // cellsX / cellsY are the centers of each 40 x 40 cell; each outside face of a cell gets a T-slot.
 const TSLOT_PROFILES = {
-        TSlotProfile.P40_4040 : { "name" : "80/20 40-4040", "width" : 40, "height" : 40, "cellsX" : [0], "cellsY" : [0], "lite" : false, "lbPerInch" : 0.1321 },
-        TSlotProfile.P40_4040_LITE : { "name" : "80/20 40-4040-Lite", "width" : 40, "height" : 40, "cellsX" : [0], "cellsY" : [0], "lite" : true, "lbPerInch" : 0.0998 },
-        TSlotProfile.P40_4080 : { "name" : "80/20 40-4080", "width" : 40, "height" : 80, "cellsX" : [0], "cellsY" : [-20, 20], "lite" : false, "lbPerInch" : 0.2317 },
-        TSlotProfile.P40_4080_LITE : { "name" : "80/20 40-4080-Lite", "width" : 40, "height" : 80, "cellsX" : [0], "cellsY" : [-20, 20], "lite" : true, "lbPerInch" : 0.1893 },
-        TSlotProfile.P40_8080 : { "name" : "80/20 40-8080", "width" : 80, "height" : 80, "cellsX" : [-20, 20], "cellsY" : [-20, 20], "lite" : false, "lbPerInch" : 0.3563 }
+        TSlotProfile.P40_4040 : { "code" : "4040", "name" : "80/20 40-4040", "width" : 40, "height" : 40, "cellsX" : [0], "cellsY" : [0], "lite" : false, "lbPerInch" : 0.1321 },
+        TSlotProfile.P40_4040_LITE : { "code" : "4040-Lite", "name" : "80/20 40-4040-Lite", "width" : 40, "height" : 40, "cellsX" : [0], "cellsY" : [0], "lite" : true, "lbPerInch" : 0.0998 },
+        TSlotProfile.P40_4080 : { "code" : "4080", "name" : "80/20 40-4080", "width" : 40, "height" : 80, "cellsX" : [0], "cellsY" : [-20, 20], "lite" : false, "lbPerInch" : 0.2317 },
+        TSlotProfile.P40_4080_LITE : { "code" : "4080-Lite", "name" : "80/20 40-4080-Lite", "width" : 40, "height" : 80, "cellsX" : [0], "cellsY" : [-20, 20], "lite" : true, "lbPerInch" : 0.1893 },
+        TSlotProfile.P40_8080 : { "code" : "8080", "name" : "80/20 40-8080", "width" : 80, "height" : 80, "cellsX" : [-20, 20], "cellsY" : [-20, 20], "lite" : false, "lbPerInch" : 0.3563 }
     };
 
 // 80/20 40 series slot dimensions (from 80/20 drawings)
@@ -92,13 +99,14 @@ const SLOT_OPENING = 8.13;      // width of the slot opening
 const SLOT_CAVITY = 20.57;      // width of the T cavity under the lips
 const SLOT_DEPTH = 12.32;       // face to slot floor
 const BORE_DIAMETER = 6.81;     // center bore (tap for M8)
-const LIP_STANDARD = 4.06;
-const LIP_LITE = 4.32;
-const WEB_STANDARD = 3.30;      // diagonal web thickness
-const WEB_LITE = 4.32;
+// Two slot styles: standard profiles have solid corners; Lite profiles have hollow corner pockets
+const LIP_STANDARD = 4.32;
+const LIP_LITE = 4.06;
+const WEB_STANDARD = 4.32;      // diagonal web thickness
+const WEB_LITE = 3.30;
 const CELL = 40;                // each 40 x 40 cell of a profile
 
-const ALUMINUM_DENSITY = 2700 * kilogram / meter ^ 3;
+const ALUMINUM_DENSITY = 2700 * kilogram / (meter * meter * meter);
 
 // ---------------------------------------------------------------------------------------------
 // Feature
@@ -122,12 +130,24 @@ export const frcProfile = defineFeature(function(context is Context, id is Id, d
 
             annotation { "Name" : "Wall thickness" }
             definition.tubeWall is TubeWall;
+
+            annotation { "Name" : "Hole pattern (1/4 in holes, 1/2 in spacing)" }
+            definition.tubeHoles is boolean;
+
+            if (definition.tubeHoles)
+            {
+                annotation { "Name" : "Min. distance from ends to first hole" }
+                isLength(definition.holeEndDistance, { (inch) : [0.125, 0.5, 10] } as LengthBoundSpec);
+            }
         }
         else
         {
             annotation { "Name" : "80/20 profile" }
             definition.tslotProfile is TSlotProfile;
         }
+
+        annotation { "Name" : "Appearance" }
+        definition.finish is ProfileFinish;
 
         annotation { "Name" : "Alignment" }
         definition.alignment is ProfileAlignment;
@@ -159,26 +179,52 @@ export const frcProfile = defineFeature(function(context is Context, id is Id, d
 // Building one part
 // ---------------------------------------------------------------------------------------------
 
+const ALUMINUM_COLOR = color(0.80, 0.81, 0.84);
+const ANODIZED_COLOR = color(0.08, 0.08, 0.09); // black anodize
+
 function getProfileSpec(definition is map) returns map
+{
+    var spec = getBaseSpec(definition);
+    if (definition.finish == ProfileFinish.ANODIZED)
+    {
+        spec.appearance = ANODIZED_COLOR;
+        spec.description = spec.description ~ ", black anodized";
+    }
+    else
+    {
+        spec.appearance = ALUMINUM_COLOR;
+    }
+    return spec;
+}
+
+function getBaseSpec(definition is map) returns map
 {
     if (definition.family == ProfileFamily.BOX_TUBE)
     {
         const tube = TUBE_SIZES[definition.tubeSize];
         const wall = TUBE_WALLS[definition.tubeWall];
+        var description = "Aluminum box tube " ~ tube.label ~ " in, " ~ wall.label ~ " in wall";
+        if (definition.tubeHoles)
+            description = description ~ ", 1/4 in holes on 1/2 in spacing";
         return {
                 "kind" : "tube",
-                "name" : tube.label ~ "x" ~ wall.label ~ " Box Tube",
+                "code" : tube.label ~ "x" ~ wall.label,
+                "nameSuffix" : definition.tubeHoles ? " Drilled" : "",
+                "description" : description,
                 "width" : tube.width,
                 "height" : tube.height,
                 "wall" : wall.wall,
-                "materialName" : "Aluminum 6061-T6",
-                "appearance" : color(0.62, 0.64, 0.68)
+                "holes" : definition.tubeHoles,
+                "holeEndDistance" : definition.holeEndDistance,
+                "materialName" : "Aluminum 6061-T6"
             };
     }
     var spec = TSLOT_PROFILES[definition.tslotProfile];
     spec.kind = "tslot";
+    spec.nameSuffix = "";
+    spec.holes = false;
+    spec.description = spec.name ~ " T-slot extrusion";
     spec.materialName = "Aluminum 6063-T6 (80/20, mass-matched)";
-    spec.appearance = color(0.82, 0.83, 0.86);
     return spec;
 }
 
@@ -226,7 +272,77 @@ function buildProfilePart(context is Context, id is Id, edge is Query, spec is m
             });
     opDeleteBodies(context, id + "deleteSketch", { "entities" : qCreatedBy(sketchId, EntityType.BODY) });
 
-    setPartProperties(context, qCreatedBy(extrudeId, EntityType.BODY), spec, totalLength);
+    const part = qCreatedBy(extrudeId, EntityType.BODY);
+    if (spec.holes)
+        cutTubeHoles(context, id, part, origin, dir, xAxis, totalLength, spec);
+
+    setPartProperties(context, part, spec, totalLength);
+}
+
+// 1/4 in holes on a 1/2 in grid, through both walls of each pair of faces.
+// Rows across a face = (face width / 1/2 in) - 1, so 1 row on a 1 in face and 3 rows on a 2 in face.
+// Along the length the holes are centered, keeping at least holeEndDistance from each end.
+function cutTubeHoles(context is Context, id is Id, part is Query, start is Vector, dir is Vector, xAxis is Vector,
+    length is ValueWithUnits, spec is map)
+{
+    const pitch = 0.5 * inch;
+    const holeRadius = 0.125 * inch;
+    const count = floor((length - 2 * spec.holeEndDistance) / pitch + 1e-6) + 1;
+    if (count < 1)
+        return;
+    const firstHole = (length - (count - 1) * pitch) / 2;
+
+    const yAxis = cross(dir, xAxis);
+    const passes = [
+            // holes through the faces that are 'width' wide (drilled along yAxis)
+            { "axis" : yAxis, "across" : spec.width * millimeter, "through" : spec.height * millimeter },
+            // holes through the faces that are 'height' wide (drilled along xAxis)
+            { "axis" : xAxis, "across" : spec.height * millimeter, "through" : spec.width * millimeter }
+        ];
+
+    var tools = [];
+    for (var p = 0; p < size(passes); p += 1)
+    {
+        const pass = passes[p];
+        const rows = round(pass.across / pitch) - 1;
+        if (rows < 1)
+            continue;
+
+        // Sketch just outside the tube, then extrude the circles all the way through it
+        const sketchId = id + ("holeSketch" ~ p);
+        const sketchOrigin = start - pass.axis * (pass.through / 2 + 1 * millimeter);
+        const sketch = newSketchOnPlane(context, sketchId, { "sketchPlane" : plane(sketchOrigin, pass.axis, dir) });
+        for (var i = 0; i < count; i += 1)
+        {
+            for (var j = 0; j < rows; j += 1)
+            {
+                skCircle(sketch, "hole" ~ i ~ "_" ~ j, {
+                            "center" : vector(firstHole + i * pitch, (j - (rows - 1) / 2) * pitch),
+                            "radius" : holeRadius
+                        });
+            }
+        }
+        skSolve(sketch);
+
+        const toolId = id + ("holeTool" ~ p);
+        opExtrude(context, toolId, {
+                    "entities" : qSketchRegion(sketchId),
+                    "direction" : pass.axis,
+                    "endBound" : BoundingType.BLIND,
+                    "endDepth" : pass.through + 2 * millimeter
+                });
+        opDeleteBodies(context, id + ("deleteHoleSketch" ~ p), { "entities" : qCreatedBy(sketchId, EntityType.BODY) });
+        tools = append(tools, qCreatedBy(toolId, EntityType.BODY));
+    }
+
+    if (size(tools) > 0)
+    {
+        opBoolean(context, id + "cutHoles", {
+                    "tools" : qUnion(tools),
+                    "targets" : part,
+                    "operationType" : BooleanOperationType.SUBTRACTION
+                });
+    }
 }
 
 function getUpDirection(context is Context, edge is Query, dir is Vector) returns Vector
@@ -249,13 +365,14 @@ function getUpDirection(context is Context, edge is Query, dir is Vector) return
 
 function setPartProperties(context is Context, part is Query, spec is map, length is ValueWithUnits)
 {
-    var lengthText;
-    if (spec.kind == "tube")
-        lengthText = toString(roundToPrecision(length / inch, 3)) ~ " in";
-    else
-        lengthText = toString(roundToPrecision(length / millimeter, 1)) ~ " mm";
+    // Name for the BOM: <type>x<length in mm>, e.g. "4040x100" or "1x2x1/16x660.4 Drilled"
+    const lengthMm = toString(roundToPrecision(length / millimeter, 1));
+    setProperty(context, { "entities" : part, "propertyType" : PropertyType.NAME, "value" : spec.code ~ "x" ~ lengthMm ~ spec.nameSuffix });
 
-    setProperty(context, { "entities" : part, "propertyType" : PropertyType.NAME, "value" : spec.name ~ " - " ~ lengthText });
+    var description = spec.description ~ ", " ~ lengthMm ~ " mm";
+    if (spec.kind == "tube")
+        description = description ~ " (" ~ toString(roundToPrecision(length / inch, 3)) ~ " in)";
+    setProperty(context, { "entities" : part, "propertyType" : PropertyType.DESCRIPTION, "value" : description });
 
     var density = ALUMINUM_DENSITY;
     if (spec.lbPerInch != undefined)
@@ -315,8 +432,8 @@ function drawTSlot(sketch is Sketch, spec is map)
         }
     }
 
-    // Standard (non-Lite) profiles have hollow corners
-    if (!spec.lite)
+    // Lite profiles have hollow corners
+    if (spec.lite)
     {
         const cx = W / 2 - 5;
         const cy = H / 2 - 5;

@@ -4,17 +4,26 @@
 - Box tube: 1x1 and 1x2, 1/16" and 1/8" wall (sharp corners).
 - 80/20 40 series: 40-4040, 40-4040-Lite, 40-4080, 40-4080-Lite, 40-8080.
 - One part per selected straight line; centered / on top / below the sketch plane; rotate 90°; extend or trim each end.
-- Part names include the cut length (inches for tube, mm for 80/20).
+- Part names for the BOM: `<type>x<length mm>`, e.g. `4040x100`, `8080x250.5`, `1x2x1/16x660.4`, `1x1x1/8x304.8 Drilled`.
+- Part Description has the full wording for purchasing (profile, wall, holes, length in mm and inches for tube).
 - Material set: 6061-T6 for tube; 80/20 density adjusted so mass matches the catalog lb/in.
+- Appearance dropdown: Aluminum (bare) or Anodized aluminum (black). Material stays aluminum either way; "black anodized" is added to the Description.
+
+## Phase 2 — box tube holes (optional checkbox)
+- 1/4 in holes on 1/2 in spacing, through both walls of each pair of faces.
+- 1 in face: 1 row (centered). 2 in face: 3 rows (−1/2, 0, +1/2 in).
+- Along the length the pattern is centered, keeping at least the chosen end distance (default 1/2 in).
+- Drilled tubes get " Drilled" at the end of the name so they don't merge with plain tube in the BOM.
 
 ### 80/20 geometry notes
 The slot shape uses the exact dimensions that matter for fit: 40/80 mm outside, 8.13 mm opening, 4.06/4.32 mm lip, 20.57 mm cavity, 12.32 mm depth, Ø6.81 bore, 3.30/4.32 mm web.
+Standard profiles (4040, 4080, 8080) use the solid-corner style (4.32 mm lip and web). Lite profiles use the corner-pocket style (4.06 mm lip, 3.30 mm web).
 The rest is simplified: no rounded corners, square corner pockets, octagon center cavity on 40-4080.
 The 15.36 / 14.85 / 8.00 mm drawing dimensions are not used directly.
 40-8080 has no drawing yet: it reuses the standard 40-series slot (two per face, 40 mm apart) and an approximate center cavity. Mass matches the catalog (0.3563 lb/in). Replace with real dimensions when a drawing is available.
 
 ## Later additions
-- **Holes (deferred on purpose):** 0.5" pitch #10 clearance (0.196") holes on box tube, chosen per face, with end margins. Possibly 80/20 end tapping and access holes.
+- Holes: choose which faces get holes; 80/20 end tapping and access holes.
 - Outside corner radius on box tube.
 - 40-8080: exact internal geometry once a drawing is available.
 - More profiles: 1/2" hex shaft, round tube, angle, other tube vendors.
@@ -27,3 +36,5 @@ The 15.36 / 14.85 / 8.00 mm drawing dimensions are not used directly.
 4. Extend/trim both ends; a trim larger than the line should give a clear error.
 5. Several lines at once (whole frame perimeter); edit the sketch afterwards and confirm parts update.
 6. Mass properties: a 1000 mm 40-4040 should weigh about 5.2 lb (0.1321 lb/in).
+7. Holes: 1x1 shows one row on every face; 1x2 shows 1 row on the 1 in faces and 3 rows on the 2 in faces; spacing 1/2 in, hole 1/4 in; pattern centered along the length; still correct with Rotate 90°.
+8. BOM: insert parts into an Assembly, open the BOM — names read like `4040x100`, and equal-length parts group.
