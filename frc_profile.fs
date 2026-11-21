@@ -155,6 +155,15 @@ export const frcProfile = defineFeature(function(context is Context, id is Id, d
         annotation { "Name" : "Rotate 90 degrees" }
         definition.rotate is boolean;
 
+        annotation { "Name" : "Join where lines meet", "Default" : true }
+        definition.autoJoints is boolean;
+
+        if (definition.autoJoints)
+        {
+            annotation { "Name" : "Reverse joints (shorter line runs through)" }
+            definition.flipJoints is boolean;
+        }
+
         annotation { "Name" : "Extend start (negative trims)" }
         isLength(definition.startExtension, { (inch) : [-100, 0, 100] } as LengthBoundSpec);
 
@@ -167,13 +176,107 @@ export const frcProfile = defineFeature(function(context is Context, id is Id, d
         if (size(edges) == 0)
             throw regenError("Select one or more straight sketch lines.", ["edges"]);
 
-        for (var i = 0; i < size(edges); i += 1)
+        // Lines can come from any number of sketches; joints are found in 3D
+        var members = [];
+        for (var edge in edges)
+            members = append(members, getMember(context, edge, spec, definition));
+
+        const adjust = getJointAdjustments(members, spec, definition);
+
+        for (var i = 0; i < size(members); i += 1)
         {
             const partId = id + unstableIdComponent(i);
             setExternalDisambiguation(context, partId, edges[i]);
-            buildProfilePart(context, partId, edges[i], spec, definition);
+            buildProfilePart(context, partId, members[i], spec, definition, adjust[2 * i], adjust[2 * i + 1]);
         }
     });
+
+// ---------------------------------------------------------------------------------------------
+// Joints
+// ---------------------------------------------------------------------------------------------
+
+const JOINT_TOLERANCE = 1e-5 * meter;
+
+// Where one line meets another:
+//   Corner (two line ends touch): one member runs through to the outside of the corner, the other
+//     stops against it. By default the longer line runs through; "Reverse joints" swaps that.
+//   T (a line end touches the middle of another line): the end stops against the other member.
+// Returns [start, end] length adjustments for each member, flattened: positive extends, negative trims.
+function getJointAdjustments(members is array, spec is map, definition is map) returns array
+{
+    const n = size(members);
+    var trims = makeArray(2 * n, 0 * meter);
+    var extensions = makeArray(2 * n, 0 * meter);
+
+    if (definition.autoJoints)
+    {
+        for (var i = 0; i < n; i += 1)
+        {
+            for (var j = i + 1; j < n; j += 1)
+            {
+                const a = members[i];
+                const b = members[j];
+                for (var ea = 0; ea < 2; ea += 1)
+                {
+                    for (var eb = 0; eb < 2; eb += 1)
+                    {
+                        if (norm(memberEnd(a, ea) - memberEnd(b, eb)) > JOINT_TOLERANCE)
+                            continue;
+
+                        // Corner: decide which member runs through
+                        var aThrough = (abs(a.length - b.length) < JOINT_TOLERANCE) || a.length > b.length;
+                        if (definition.flipJoints == true)
+                            aThrough = !aThrough;
+                        const through = aThrough ? a : b;
+                        const butting = aThrough ? b : a;
+                        const throughIndex = aThrough ? 2 * i + ea : 2 * j + eb;
+                        const buttingIndex = aThrough ? 2 * j + eb : 2 * i + ea;
+                        extensions[throughIndex] = max(extensions[throughIndex], extentAlong(butting, through.dir, spec) / 2);
+                        trims[buttingIndex] = max(trims[buttingIndex], extentAlong(through, butting.dir, spec) / 2);
+                    }
+                }
+
+                // T joints: an end of one line on the middle of the other
+                for (var ea = 0; ea < 2; ea += 1)
+                {
+                    if (isOnMiddle(memberEnd(a, ea), b))
+                        trims[2 * i + ea] = max(trims[2 * i + ea], extentAlong(b, a.dir, spec) / 2);
+                }
+                for (var eb = 0; eb < 2; eb += 1)
+                {
+                    if (isOnMiddle(memberEnd(b, eb), a))
+                        trims[2 * j + eb] = max(trims[2 * j + eb], extentAlong(a, b.dir, spec) / 2);
+                }
+            }
+        }
+    }
+
+    // An end that stops against something is trimmed; otherwise it may be extended over a corner
+    var result = [];
+    for (var k = 0; k < 2 * n; k += 1)
+        result = append(result, trims[k] > 0 * meter ? -trims[k] : extensions[k]);
+    return result;
+}
+
+function memberEnd(member is map, whichEnd is number) returns Vector
+{
+    return whichEnd == 0 ? member.start : member.end;
+}
+
+// True if point lies on the line strictly between its ends
+function isOnMiddle(point is Vector, member is map) returns boolean
+{
+    const t = dot(point - member.start, member.dir);
+    if (t < JOINT_TOLERANCE || t > member.length - JOINT_TOLERANCE)
+        return false;
+    return norm(point - (member.start + member.dir * t)) < JOINT_TOLERANCE;
+}
+
+// How far a member's cross-section reaches along a direction (full width, not half)
+function extentAlong(member is map, direction is Vector, spec is map) returns ValueWithUnits
+{
+    return abs(dot(direction, member.xAxis)) * spec.width * millimeter + abs(dot(direction, member.yAxis)) * spec.height * millimeter;
+}
 
 // ---------------------------------------------------------------------------------------------
 // Building one part
@@ -189,6 +292,7 @@ function getProfileSpec(definition is map) returns map
     {
         spec.appearance = ANODIZED_COLOR;
         spec.description = spec.description ~ ", black anodized";
+        spec.partNumberSuffix = spec.partNumberSuffix ~ "-BLK";
     }
     else
     {
@@ -210,6 +314,7 @@ function getBaseSpec(definition is map) returns map
                 "kind" : "tube",
                 "code" : tube.label ~ "x" ~ wall.label,
                 "nameSuffix" : definition.tubeHoles ? " Drilled" : "",
+                "partNumberSuffix" : definition.tubeHoles ? "-D" : "",
                 "description" : description,
                 "width" : tube.width,
                 "height" : tube.height,
@@ -222,22 +327,21 @@ function getBaseSpec(definition is map) returns map
     var spec = TSLOT_PROFILES[definition.tslotProfile];
     spec.kind = "tslot";
     spec.nameSuffix = "";
+    spec.partNumberSuffix = "";
     spec.holes = false;
     spec.description = spec.name ~ " T-slot extrusion";
     spec.materialName = "Aluminum 6063-T6 (80/20, mass-matched)";
     return spec;
 }
 
-function buildProfilePart(context is Context, id is Id, edge is Query, spec is map, definition is map)
+// A selected line plus the orientation of the profile along it
+function getMember(context is Context, edge is Query, spec is map, definition is map) returns map
 {
     const tangent = evEdgeTangentLine(context, { "edge" : edge, "parameter" : 0 });
     const dir = tangent.direction;
     const edgeLength = evLength(context, { "entities" : edge });
-    const totalLength = edgeLength + definition.startExtension + definition.endExtension;
-    if (totalLength < 0.01 * inch)
-        throw regenError("A part would have zero or negative length. Reduce the trim.", ["startExtension", "endExtension"]);
 
-    // "up" is the sketch plane normal, so profiles sit square to the frame sketch
+    // "up" is the sketch plane normal, so profiles sit square to their sketch
     const up = getUpDirection(context, edge, dir);
     var xAxis = cross(up, dir);
     var extentAlongUp = spec.height * millimeter;
@@ -253,7 +357,29 @@ function buildProfilePart(context is Context, id is Id, edge is Query, spec is m
     else if (definition.alignment == ProfileAlignment.BELOW)
         shift = -extentAlongUp / 2;
 
-    const origin = tangent.origin - dir * definition.startExtension + up * shift;
+    return {
+            "start" : tangent.origin,
+            "end" : tangent.origin + dir * edgeLength,
+            "dir" : dir,
+            "length" : edgeLength,
+            "up" : up,
+            "shift" : shift,
+            "xAxis" : xAxis,
+            "yAxis" : cross(dir, xAxis) // profile 'height' direction
+        };
+}
+
+function buildProfilePart(context is Context, id is Id, member is map, spec is map, definition is map,
+    startJoint is ValueWithUnits, endJoint is ValueWithUnits)
+{
+    const dir = member.dir;
+    const xAxis = member.xAxis;
+    const startOffset = definition.startExtension + startJoint;
+    const totalLength = member.length + startOffset + definition.endExtension + endJoint;
+    if (totalLength < 0.01 * inch)
+        throw regenError("A part would have zero or negative length. Reduce the trim, or check lines that are shorter than the tube is wide.", ["startExtension", "endExtension"]);
+
+    const origin = member.start - dir * startOffset + member.up * member.shift;
 
     const sketchId = id + "sketch";
     const sketch = newSketchOnPlane(context, sketchId, { "sketchPlane" : plane(origin, dir, xAxis) });
@@ -368,6 +494,10 @@ function setPartProperties(context is Context, part is Query, spec is map, lengt
     // Name for the BOM: <type>x<length in mm>, e.g. "4040x100" or "1x2x1/16x660.4 Drilled"
     const lengthMm = toString(roundToPrecision(length / millimeter, 1));
     setProperty(context, { "entities" : part, "propertyType" : PropertyType.NAME, "value" : spec.code ~ "x" ~ lengthMm ~ spec.nameSuffix });
+
+    // Part number: same type x length, plus -D (drilled) and -BLK (black anodized) so different SKUs never merge.
+    // Set on every rebuild, so it follows the sketch when a line's length changes.
+    setProperty(context, { "entities" : part, "propertyType" : PropertyType.PART_NUMBER, "value" : spec.code ~ "x" ~ lengthMm ~ spec.partNumberSuffix });
 
     var description = spec.description ~ ", " ~ lengthMm ~ " mm";
     if (spec.kind == "tube")
